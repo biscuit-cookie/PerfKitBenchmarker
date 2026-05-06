@@ -120,6 +120,13 @@
     created and managed by PKB.
 -   Refactored `kubernetes_redis_memtier_benchmark`, including removal of
     non-functioning Redis Cluster testing.
+-   Allow/require setting individual nodepools' min/max node counts
+    independently of the overall K8s cluster's default nodepool. For Standard &
+    Karpenter clusters.
+-   Support more of the Kubernetes spec in the Karpenter implementation,
+    bringing this variant more in-line with others.
+-   Rename GKE Autopilot & EKS Auto mode's cluster_type within PKB from
+    'Autopilot' to 'Auto'.
 
 ### New features:
 
@@ -275,6 +282,7 @@
     desired, turn it off with `--notruncate_duplicate_logs`.
 -   Add support for Alma Linux 8, 9, and 10 for the Azure provider.
 -   Re-enable support for Rocky Linux 8, 9, and 10 for the Azure provider.
+-   Add Ubuntu 26.04 support for GCP, AWS, and Azure Providers.
 
 ### Enhancements:
 
@@ -453,6 +461,8 @@
     maintenance_simulation_trigger.py.
 -   Added `--retry_on_insufficient_capacity_cloud_failure` so that resource
     creation can be retried on stock outs.
+-   Add support for deploying VMs inside managed VM groups with
+    `--use_managed_vm_groups`.
 
 ### Bug fixes and maintenance updates:
 

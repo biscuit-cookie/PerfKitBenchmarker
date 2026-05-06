@@ -21,6 +21,7 @@ instructions.
 """
 
 from collections import abc
+import copy
 import json
 import logging
 import math
@@ -43,7 +44,6 @@ from perfkitbenchmarker.resources.container_service import container_cluster
 from perfkitbenchmarker.resources.container_service import kubectl
 from perfkitbenchmarker.resources.container_service import kubernetes_cluster
 from perfkitbenchmarker.resources.container_service import kubernetes_commands
-
 
 FLAGS = flags.FLAGS
 # GPU types which practically require spot to get.
@@ -182,13 +182,9 @@ class BaseEksCluster(kubernetes_cluster.KubernetesCluster):
             'pkb_nodepool': nodepool.name,
         },
     }
-    if (
-        nodepool.name == self.default_nodepool.name
-        and self.min_nodes != self.max_nodes
-    ):
-      # Min / max config only apply to the default nodepool.
-      group_json['minSize'] = self.min_nodes
-      group_json['maxSize'] = self.max_nodes
+    if nodepool.min_nodes != nodepool.max_nodes:
+      group_json['minSize'] = nodepool.min_nodes
+      group_json['maxSize'] = nodepool.max_nodes
     return group_json
 
   def _WriteJsonToFile(self, json_dict: dict[str, Any]) -> str:
@@ -541,7 +537,7 @@ class EksAutoCluster(BaseEksCluster):
   """
 
   CLOUD = provider_info.AWS
-  CLUSTER_TYPE = 'Autopilot'
+  CLUSTER_TYPE = 'Auto'
 
   def __init__(self, spec):
     super().__init__(spec)
@@ -625,7 +621,7 @@ class EksAutoCluster(BaseEksCluster):
 
 _KARPENTER_NAMESPACE = 'kube-system'
 _KARPENTER_VERSION = '1.8.1'
-_DEAULT_K8S_VERSION = '1.34'
+_DEFAULT_K8S_VERSION = '1.34'
 
 
 class EksKarpenterCluster(BaseEksCluster):
@@ -641,7 +637,11 @@ class EksKarpenterCluster(BaseEksCluster):
     super().__init__(spec)
     self._ChooseSecondZone()
     self.stack_name = f'Karpenter-{self.name}'
-    self.cluster_version: str = self.cluster_version or _DEAULT_K8S_VERSION
+    self.cluster_version: str = self.cluster_version or _DEFAULT_K8S_VERSION
+    # The AMI version for current kubernetes version.
+    # See e.g. https://karpenter.sh/docs/tasks/managing-amis/ for not using
+    # @latest.
+    self.alias_version: str | None = None
 
   def _Create(self):
     """Creates the control plane and worker nodes."""
@@ -674,6 +674,13 @@ class EksKarpenterCluster(BaseEksCluster):
         ]
         + formation_tags,
     )
+    # The default control plane nodepool is only used for initial commands
+    # to setup Karpenter. Karpenter will setup its own nodepools later.
+    bootstrapping_nodepool = copy.copy(self.default_nodepool)
+    bootstrapping_nodepool.num_nodes = 1
+    bootstrapping_nodepool.min_nodes = 1
+    bootstrapping_nodepool.max_nodes = 1
+    bootstrapping_nodepool.machine_type = 'm7i.2xlarge'
     create_json: dict[str, Any] = {
         'metadata': {
             'tags': {'karpenter.sh/discovery': self.name},
@@ -696,7 +703,9 @@ class EksKarpenterCluster(BaseEksCluster):
             'groups': ['system:bootstrappers', 'system:nodes'],
         }],
         'addons': [{'name': 'eks-pod-identity-agent'}],
-        'managedNodeGroups': [self._RenderNodeGroupJson(self.default_nodepool)],
+        'managedNodeGroups': [
+            self._RenderNodeGroupJson(bootstrapping_nodepool)
+        ],
     }
     self._EksCtlCreate(create_json)
 
@@ -977,28 +986,37 @@ class EksKarpenterCluster(BaseEksCluster):
         '[PKB][EKS] Allowed ALB SG %s -> node SGs on port %s', alb_sg, port
     )
 
-  @staticmethod
-  def _DefaultNodepoolInstanceTypes() -> list[str]:
-    """EC2 instance types for the default Karpenter NodePool manifest.
-
-    Controlled by --eks_karpenter_nodepool_instance_types.
-    Empty list: Jinja template keeps instance-category/generation rules.
-    """
-    return [
-        t.strip()
-        for t in FLAGS.eks_karpenter_nodepool_instance_types
-        if t.strip()
-    ]
-
   def _PostCreate(self):
     """Performs post-creation steps for the cluster."""
     super()._PostCreate()
-    # Karpenter controller resources: default 1/1Gi; scale up when
-    # node_scale target exceeds 1000 nodes.
-    num_nodes = getattr(FLAGS, 'kubernetes_scale_num_nodes', None)
-    if num_nodes is not None and num_nodes > 1000:
+    if FLAGS.eks_tune_vpc_cni_for_scale:
+      logging.info('Tuning aws-node (VPC CNI) for kubernetes_node_scale')
+      kubectl.RunKubectlCommand([
+          'set',
+          'env',
+          'daemonset/aws-node',
+          '-n',
+          'kube-system',
+          'WARM_ENI_TARGET=0',
+          'WARM_IP_TARGET=1',
+          'MINIMUM_IP_TARGET=1',
+      ])
+      kubectl.RunRetryableKubectlCommand(
+          [
+              'rollout',
+              'status',
+              'daemonset/aws-node',
+              '-n',
+              'kube-system',
+              '--timeout=%ds' % vm_util.DEFAULT_TIMEOUT,
+          ],
+          timeout=vm_util.DEFAULT_TIMEOUT,
+      )
+    # Karpenter controller resources: default 1/1Gi; scale up controller when
+    # more nodes are expected.
+    if self.max_total_nodes > 1000:
       controller_cpu, controller_memory = 4, '16Gi'
-    elif num_nodes is not None and num_nodes >= 500:
+    elif self.max_total_nodes >= 500:
       controller_cpu, controller_memory = 2, '8Gi'
     else:
       controller_cpu, controller_memory = 1, '1Gi'
@@ -1060,21 +1078,55 @@ class EksKarpenterCluster(BaseEksCluster):
         '--region',
         self.region,
     ])
-    alias_version = (
+    self.alias_version = (
         'v'
         + full_version.strip().strip('"').split(f'{self.cluster_version}-v')[1]
     )
-    # NodePool CPU limit: benchmark target nodes * vCPU + 5%, min 1000.
-    num_nodes = getattr(FLAGS, 'kubernetes_scale_num_nodes', 5)
-    vcpu_per_node = FLAGS.eks_karpenter_limits_vcpu_per_node
-    cpu_limit = max(1000, math.ceil(num_nodes * vcpu_per_node * 1.05))
-    kubernetes_commands.ApplyManifest(
+    self._CreateKarpenterNodePool(self.default_nodepool)
+    for nodepool in self.nodepools.values():
+      self._CreateKarpenterNodePool(nodepool)
+
+  def _CreateKarpenterNodePool(self, nodepool: container.BaseNodePoolConfig):
+    """Creates the Karpenter NodePool and EC2NodeClass."""
+    yaml_nodepool = kubernetes_commands.ConvertManifestToYamlDicts(
         'container/karpenter/nodepool.yaml.j2',
+        NODEPOOL_NAME=nodepool.name,
         CLUSTER_NAME=self.name,
-        ALIAS_VERSION=alias_version,
-        KARPENTER_NODEPOOL_CPU_LIMIT=cpu_limit,
-        KARPENTER_INSTANCE_TYPES=self._DefaultNodepoolInstanceTypes(),
+        ALIAS_VERSION=self.alias_version,
     )
+    if nodepool.machine_families:
+      machine_requirements = [
+          {
+              'key': 'karpenter.k8s.aws/instance-category',
+              'operator': 'In',
+              'values': nodepool.machine_families,
+          },
+          {
+              'key': 'karpenter.k8s.aws/instance-generation',
+              'operator': 'Gt',
+              'values': ['2'],
+          },
+      ]
+    else:
+      machine_requirements = [{
+          'key': 'node.kubernetes.io/instance-type',
+          'operator': 'In',
+          'values': [nodepool.machine_type],
+      }]
+    yaml_nodepool[0]['spec']['template']['spec']['requirements'].extend(
+        machine_requirements
+    )
+    if nodepool.min_nodes == nodepool.max_nodes:
+      # Not using autoscaling; set static replica count.
+      yaml_nodepool[0]['spec']['replicas'] = nodepool.num_nodes
+    else:
+      # NodePool CPU limit: max nodes * vCPU + 5%, max 1000.
+      vcpu_per_node = FLAGS.eks_karpenter_limits_vcpu_per_node
+      cpu_limit = max(
+          1000, math.ceil(nodepool.max_nodes * vcpu_per_node * 1.05)
+      )
+      yaml_nodepool[0]['spec']['limits'] = {'cpu': cpu_limit}
+    kubernetes_commands.ApplyYaml(yaml_nodepool)
 
   def _Delete(self):
     """Deletes the control plane and worker nodes."""
@@ -1169,6 +1221,7 @@ class EksKarpenterCluster(BaseEksCluster):
             '--timeout=600s',
         ],
         timeout=660,
+        raise_on_timeout=False,
         suppress_failure=lambda stdout, stderr, retcode: (
             'deleted' in stdout
             and 'timed out waiting for the condition' in stderr
