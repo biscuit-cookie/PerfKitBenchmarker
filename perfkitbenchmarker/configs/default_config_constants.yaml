@@ -28,6 +28,10 @@ default_dual_core: &default_dual_core
     machine_type: cx2-4x8
     zone: us-south-1
     image: null
+  OpenStack:
+    machine_type: null
+    zone: null
+    image: null
   Kubernetes:
     image: null
 

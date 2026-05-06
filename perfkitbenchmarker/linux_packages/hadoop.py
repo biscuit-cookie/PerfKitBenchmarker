@@ -21,6 +21,7 @@ import logging
 import os
 import posixpath
 import re
+import shlex
 import time
 from typing import Any
 
@@ -359,6 +360,20 @@ def ConfigureAndStart(master, workers, start_yarn=True, configure_s3=False):
   # If there are no workers set up in pseudo-distributed mode, where the master
   # node runs the worker daemons.
   workers = workers or [master]
+
+  host_entries = [
+      '{} {}'.format(vm.internal_ip, vm.hostname or vm.name) for vm in vms
+  ]
+
+  def AddHostEntries(vm):
+    vm.RemoteCommand(
+        'printf "%s\\n" {} | sudo tee -a /etc/hosts'.format(
+            ' '.join(shlex.quote(entry) for entry in host_entries)
+        )
+    )
+
+  background_tasks.RunThreaded(AddHostEntries, vms)
+
   fn = functools.partial(
       _RenderConfig, master=master, workers=workers, configure_s3=configure_s3
   )

@@ -53,6 +53,10 @@ dpb_terasort_benchmark:
           machine_type: m5.xlarge
         Azure:
           machine_type: Standard_F4s_v2
+        OpenStack:
+          machine_type: null
+          zone: null
+          image: null
       disk_spec:
         GCP:
           disk_size: 500
@@ -65,6 +69,10 @@ dpb_terasort_benchmark:
         Azure:
           disk_size: 500
           disk_type: Standard_LRS
+          mount_point: /scratch_ts
+        OpenStack:
+          disk_size: 20
+          disk_type: standard
           mount_point: /scratch_ts
     worker_count: 2
 """
@@ -134,6 +142,17 @@ def CheckPrerequisites(benchmark_config):
       and FLAGS.dpb_terasort_storage_type != _FS_TYPE_PERSISTENT
   ):
     raise errors.Config.InvalidValue('You cannot set HDFS block size.')
+
+  if (
+      FLAGS.dpb_terasort_storage_type == _FS_TYPE_PERSISTENT
+      and dpb_service_type == dpb_constants.UNMANAGED_DPB_SVC_YARN_CLUSTER
+      and benchmark_config.dpb_service.worker_group.cloud not in ['GCP', 'AWS']
+  ):
+    raise errors.Config.InvalidValue(
+        'Persistent Terasort storage requires a supported object storage '
+        'backend. Use --dpb_terasort_storage_type=ephemeral for unmanaged '
+        'Hadoop on this cloud.'
+    )
 
 
 def Prepare(spec: benchmark_spec.BenchmarkSpec):

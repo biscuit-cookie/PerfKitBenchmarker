@@ -34,6 +34,7 @@ FLAGS = flags.FLAGS
 # https://download.aerospike.com/artifacts/aerospike-tools/7.0.5/
 AEROSPIKE_TOOL_VERSION_NAME_FOR_OS = {
     os_types.UBUNTU2004: 'ubuntu20.04',
+    os_types.UBUNTU2204: 'ubuntu22.04',
     os_types.RHEL8: 'el8',
 }
 

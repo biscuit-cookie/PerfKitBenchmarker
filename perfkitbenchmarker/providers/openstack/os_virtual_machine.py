@@ -26,6 +26,7 @@ Images:
 import json
 import logging
 import threading
+import time
 from absl import flags
 from perfkitbenchmarker import disk_strategies
 from perfkitbenchmarker import errors
@@ -40,6 +41,7 @@ from perfkitbenchmarker.providers.openstack import utils as os_utils
 NONE = 'None'
 
 VALIDATION_ERROR_MESSAGE = '{0} {1} could not be found.'
+FLOATING_IP_ASSOCIATION_DELAY_SEC = 20
 
 FLAGS = flags.FLAGS
 
@@ -301,7 +303,8 @@ class OpenStackVirtualMachine(virtual_machine.BaseVirtualMachine):
     cmd.flags['flavor'] = self.machine_type
     cmd.flags['security-group'] = self.group_id
     cmd.flags['key-name'] = self.key_name
-    cmd.flags['availability-zone'] = self.zone
+    if self.zone:
+      cmd.flags['availability-zone'] = self.zone
     cmd.flags['nic'] = 'net-id=%s' % self.network_name
     cmd.flags['wait'] = True
     if FLAGS.openstack_config_drive:
@@ -381,11 +384,30 @@ class OpenStackVirtualMachine(virtual_machine.BaseVirtualMachine):
       self.ip_address = self.floating_ip.floating_ip_address
 
   def _GetNetworkIPAddress(self, server_dict, network_name):
-    addresses = server_dict['addresses'].split(',')
-    for address in addresses:
-      if network_name in address:
-        _, ip = address.split('=')
-        return ip
+      addresses_field = server_dict['addresses']
+      # print(server_dict, "\n\nSERVER DICT")
+
+      if isinstance(addresses_field, dict):
+          net_addrs = addresses_field.get(network_name, [])
+          if len(net_addrs) > 1:
+            return net_addrs[1]
+          elif len(net_addrs) == 1:
+            return net_addrs[0]
+          else:
+            return None
+
+      if isinstance(addresses_field, str):
+          addresses = addresses_field.split(',')
+          for address in addresses:
+              address = address.strip()
+              if network_name in address:
+                  parts = address.split('=')
+                  if len(parts) > 1:
+                      return parts[-1].strip()
+          return None
+
+      return None
+
 
   def _GetInternalNetworkCIDR(self):
     """Returns IP addresses source range of internal network."""
@@ -412,6 +434,7 @@ class OpenStackVirtualMachine(virtual_machine.BaseVirtualMachine):
     logging.info(
         'floating-ip associated: {}'.format(floating_ip.floating_ip_address)
     )
+    time.sleep(FLOATING_IP_ASSOCIATION_DELAY_SEC)
     return floating_ip
 
   def CreateScratchDisk(self, _, disk_spec):
@@ -445,3 +468,15 @@ class ClearBasedOpenStackVirtualMachine(
     OpenStackVirtualMachine, linux_virtual_machine.ClearMixin
 ):
   DEFAULT_IMAGE = 'upstream-clear'
+
+
+class Ubuntu2204BasedOpenStackVirtualMachine(
+    OpenStackVirtualMachine, linux_virtual_machine.Ubuntu2204Mixin
+):
+  DEFAULT_IMAGE = 'jammy-server-cloudimg-amd64'
+
+
+class Ubuntu2404BasedOpenStackVirtualMachine(
+    OpenStackVirtualMachine, linux_virtual_machine.Ubuntu2404Mixin
+):
+  DEFAULT_IMAGE = 'noble-server-cloudimg-amd64'

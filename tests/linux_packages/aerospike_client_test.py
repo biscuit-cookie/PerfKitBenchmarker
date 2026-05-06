@@ -979,5 +979,27 @@ class AerospikeClientTestCase(pkb_common_test_case.PkbCommonTestCase):
     )
 
 
+class AerospikeClientInstallTestCase(pkb_common_test_case.PkbCommonTestCase):
+
+  @flagsaver.flagsaver(os_type='ubuntu2204')
+  def testInstallUbuntu2204(self):
+    vm = mock.Mock()
+    vm.cpu_arch = 'x86_64'
+
+    aerospike_client._Install(vm)
+
+    vm.Install.assert_called_once_with('wget')
+    vm.RemoteCommand.assert_has_calls([
+        mock.call(
+            'wget https://download.aerospike.com/artifacts/aerospike-tools/'
+            '10.2.1/aerospike-tools_10.2.1_ubuntu22.04_x86_64.tgz'
+        ),
+        mock.call('tar xvzf aerospike-tools_10.2.1_ubuntu22.04_x86_64.tgz'),
+        mock.call(
+            'cd aerospike-tools_10.2.1_ubuntu22.04_x86_64; sudo ./asinstall'
+        ),
+    ])
+
+
 if __name__ == '__main__':
   unittest.main()

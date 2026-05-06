@@ -95,9 +95,8 @@ class OpenStackFirewall(network.BaseFirewall):
           vm, OSC_SEC_GROUP_RULE_CMD, 'create', vm.group_id
       )
       if source_range:
-        cmd.flags['src-ip'] = source_range
-      cmd.flags['dst-port'] = str(icmp_type)
-      cmd.flags['proto'] = ICMP
+        cmd.flags['remote-ip'] = source_range
+      cmd.flags['protocol'] = ICMP
       cmd.Issue()
       self.sec_group_rules_set.add(sec_group_rule)
 
@@ -128,13 +127,13 @@ class OpenStackFirewall(network.BaseFirewall):
           vm, OSC_SEC_GROUP_RULE_CMD, 'create', vm.group_id
       )
       if source_range:
-        cmd.flags['src-ip'] = source_range
+        cmd.flags['remote-ip'] = source_range
       cmd.flags['dst-port'] = '%d:%d' % (start_port, end_port)
       for prot in (
           TCP,
           UDP,
       ):
-        cmd.flags['proto'] = prot
+        cmd.flags['protocol'] = prot
         cmd.Issue()
       self.sec_group_rules_set.add(sec_group_rule)
 

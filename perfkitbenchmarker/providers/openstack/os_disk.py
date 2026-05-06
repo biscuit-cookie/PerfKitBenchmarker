@@ -30,11 +30,14 @@ STANDARD = 'standard'
 def CreateVolume(resource, name):
   """Creates a remote (Cinder) block volume."""
   vol_cmd = os_utils.OpenStackCLICommand(resource, 'volume', 'create', name)
-  vol_cmd.flags['availability-zone'] = resource.zone
+  if resource.zone:
+    vol_cmd.flags['availability-zone'] = resource.zone
   vol_cmd.flags['size'] = resource.disk_size
   if FLAGS.openstack_volume_type:
     vol_cmd.flags['type'] = FLAGS.openstack_volume_type
-  stdout, _, _ = vol_cmd.Issue()
+  stdout, stderr, _ = vol_cmd.Issue()
+  if stderr:
+    raise errors.Error(stderr)
   vol_resp = json.loads(stdout)
   return vol_resp
 
@@ -42,12 +45,15 @@ def CreateVolume(resource, name):
 def CreateBootVolume(resource, name, image):
   """Creates a remote (Cinder) block volume with a boot image."""
   vol_cmd = os_utils.OpenStackCLICommand(resource, 'volume', 'create', name)
-  vol_cmd.flags['availability-zone'] = resource.zone
+  if resource.zone:
+    vol_cmd.flags['availability-zone'] = resource.zone
   vol_cmd.flags['image'] = image
   vol_cmd.flags['size'] = resource.disk_size or GetImageMinDiskSize(
       resource, image
   )
-  stdout, _, _ = vol_cmd.Issue()
+  stdout, stderr, _ = vol_cmd.Issue()
+  if stderr:
+    raise errors.Error(stderr)
   vol_resp = json.loads(stdout)
   return vol_resp
 
@@ -116,13 +122,10 @@ class OpenStackDiskSpec(disk.BaseDiskSpec):
         provided config values.
     """
     super()._ApplyFlags(config_values, flag_values)
-    if (
-        flag_values['openstack_volume_size'].present
-        and not flag_values['data_disk_size'].present
-    ):
-      config_values['disk_size'] = flag_values.openstack_volume_size
-    else:
+    if flag_values['data_disk_size'].present:
       config_values['disk_size'] = flag_values.data_disk_size
+    elif flag_values['openstack_volume_size'].present:
+      config_values['disk_size'] = flag_values.openstack_volume_size
     if flag_values['openstack_volume_type'].present:
       config_values['volume_type'] = flag_values.openstack_volume_type
 

@@ -35,6 +35,7 @@ AEROSPIKE_DIR = '%s/aerospike-server' % linux_packages.INSTALL_DIR
 
 AEROSPIKE_VERSION_NAME_FOR_OS = {
     os_types.UBUNTU2004: 'ubuntu20',
+    os_types.UBUNTU2204: 'ubuntu22',
     os_types.RHEL8: 'el8',
 }
 
@@ -64,7 +65,7 @@ _AEROSPIKE_ENTERPRISE_VERSION = flags.DEFINE_string(
 
 _CAPTURE_LM_TIMESTAMPS = flags.DEFINE_boolean(
     'capture_live_migration_timestamps',
-    'False',
+    False,
     'Whether to capture LM event timestamps.',
     allow_override=True,
 )
