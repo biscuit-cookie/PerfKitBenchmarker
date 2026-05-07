@@ -151,6 +151,8 @@ def Configure(vm, seed_vms, custom_cassandra_conf=None):
       'cluster_name': 'Test cluster',
       'datacenter': 'datacenter',
       'rack': vm.name,
+      'concurrent_reads': 32,
+      'concurrent_writes': 32,
   }
   context.update(custom_cassandra_conf)
   logging.info('cassandra yaml context: %s', context)
@@ -319,7 +321,8 @@ def _StartCassandraIfNotRunning(vm):
 
 
 def GetCassandraCliPath(_):
-  return posixpath.join(CASSANDRA_DIR, 'bin', 'cassandra-cli')
+  """ return posixpath.join(CASSANDRA_DIR, 'bin', 'cassandra-cli') # deprecated """
+  return posixpath.join(CASSANDRA_DIR, 'bin', 'cqlsh')
 
 
 def GetCassandraPath():
